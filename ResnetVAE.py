@@ -33,6 +33,28 @@ class Encoder(nn.Module):
         logvar = self.fc_logvar(h)
         return mu, logvar
 
+class ResNetEncoder(nn.Module):
+    def __init__(self, latent_dim=20):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(1, 32, 3, stride=2, padding=1),  # 28x28 -> 14x14
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 3, stride=2, padding=1),  # 14x14 -> 7x7
+            nn.ReLU(),
+            nn.Conv2d(64, 128, 3, stride=2, padding=1),  # 7x7 -> 4x4
+            nn.ReLU(),
+        )
+        self.flatten = nn.Flatten()
+        self.fc_mu = nn.Linear(128 * 4 * 4, latent_dim)
+        self.fc_logvar = nn.Linear(128 * 4 * 4, latent_dim)
+
+    def forward(self, x):
+        x = x.view(-1, 1, 28, 28)
+        h = self.conv(x)
+        h = self.flatten(h)
+        mu = self.fc_mu(h)
+        logvar = self.fc_logvar(h)
+        return mu, logvar
 
 class Decoder(nn.Module):
     """
@@ -51,17 +73,32 @@ class Decoder(nn.Module):
         x_logits = self.fc3(h)
         return x_logits
 
+class ResNetDecoder(nn.Module):
+    def __init__(self, latent_dim=20):
+        super().__init__()
+        self.fc = nn.Linear(latent_dim, 128 * 4 * 4)
+        self.deconv = nn.Sequential(
+            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),  # 4x4 -> 8x8
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1),  # 8x8 -> 16x16
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 1, 4, stride=2, padding=1),  # 16x16 -> 32x32
+        )
+
+    def forward(self, z):
+        h = self.fc(z)
+        h = h.view(-1, 128, 4, 4)
+        x_recon = self.deconv(h)
+        x_recon = x_recon[:, :, 2:30, 2:30].contiguous()  # Ensure memory layout is correct
+        x_recon = x_recon.view(x_recon.size(0), -1)  # Flatten to [batch_size, 784]
+        return x_recon
 
 class VAE(nn.Module):
-    """
-    Variational Autoencoder combining encoder and decoder.
-    """
-
     def __init__(self, input_dim=784, hidden_dim=400, latent_dim=20):
         super(VAE, self).__init__()
         self.latent_dim = latent_dim
-        self.encoder = Encoder(input_dim, hidden_dim, latent_dim)
-        self.decoder = Decoder(latent_dim, hidden_dim, input_dim)
+        self.encoder = ResNetEncoder(latent_dim=latent_dim)
+        self.decoder = ResNetDecoder(latent_dim=latent_dim)
 
     def reparameterize(self, mu, logvar):
         """
@@ -230,10 +267,10 @@ def generate_samples(model, num_samples=100, device='cuda'):
         x_samples = torch.sigmoid(x_logits).view(-1, 28, 28)
 
     # Visualize grid of samples
-    fig, axes = plt.subplots(int(num_samples/10), 10, figsize=(10, int(num_samples/10)))
+    fig, axes = plt.subplots(10, 10, figsize=(10, 10))
     axes = axes.ravel()
 
-    for i in range(num_samples):
+    for i in range(100):
         axes[i].imshow(x_samples[i].cpu(), cmap='gray')
         axes[i].axis('off')
 
@@ -515,14 +552,14 @@ def main():
     # # Save model
     # torch.save(model.state_dict(), 'vae_model.pth')
 
-    # Visualizations and analysis
+    # # Visualizations and analysis
     # print("\nGenerating visualizations...")
 
     # # 1. Reconstruction quality
     # visualize_reconstructions(model, test_loader, device)
 
     # # 2. Generate new samples
-    # generated_samples = generate_samples(model, num_samples=20, device=device)
+    # generated_samples = generate_samples(model, num_samples=100, device=device)
 
     # # 3. Analyze latent space
     # latent_codes, labels = analyze_latent_space(model, test_loader, device)

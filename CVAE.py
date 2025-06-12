@@ -192,14 +192,14 @@ def train_cvae(model, train_loader, test_loader, epochs=100, lr=1e-3, device='cu
     train_losses = []
     test_losses = []
 
-    for epoch in range(epochs):
+    for epoch in tqdm(range(epochs)):
         # Training
         model.train()
         train_loss = 0
         train_recon = 0
         train_kl = 0
 
-        for x_cond, y_target, _ in tqdm(train_loader, desc=f'Epoch {epoch + 1}/{epochs}'):
+        for x_cond, y_target, _ in train_loader:
             x_cond = x_cond.to(device)
             y_target = y_target.to(device)
 
@@ -567,6 +567,72 @@ def compare_models_quantitatively(cvae_model, regression_model, test_loader, dev
         'cvae_best_mse': avg_best_cvae_mse
     }
 
+def compare_latent_dimensions_cvae(train_loader, test_loader, device, dimensions=[2, 5, 10, 20, 50]):
+    """Compare CVAE performance with different latent dimensions."""
+    results = {}
+
+    for dim in dimensions:
+        print(f"\nTraining CVAE with latent dimension {dim}...")
+
+        # Create and train model
+        model = CVAE(latent_dim=dim).to(device)
+        train_losses, test_losses = train_cvae(model, train_loader, test_loader,
+                                               epochs=50, device=device)
+
+        # Evaluate reconstruction quality
+        model.eval()
+        total_mse = 0
+        total_samples = 0
+
+        with torch.no_grad():
+            for x_cond, y_target, _ in test_loader:
+                x_cond = x_cond.to(device)
+                y_target = y_target.to(device)
+                y_logits, _, _ = model(y_target, x_cond)
+                y_recon = torch.sigmoid(y_logits)
+
+                mse = F.mse_loss(y_recon, y_target, reduction='sum')
+                total_mse += mse.item()
+                total_samples += y_target.size(0)
+
+        avg_mse = total_mse / total_samples
+
+        results[dim] = {
+            'model': model,
+            'train_losses': train_losses,
+            'test_losses': test_losses,
+            'mse': avg_mse,
+            'final_test_loss': test_losses[-1]
+        }
+
+        print(f"Latent dim {dim}: MSE = {avg_mse:.4f}, Final test loss = {test_losses[-1]:.4f}")
+
+    # Plot comparison
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+    # MSE vs latent dimension
+    dims = list(results.keys())
+    mses = [results[d]['mse'] for d in dims]
+    ax1.plot(dims, mses, 'bo-')
+    ax1.set_xlabel('Latent Dimension')
+    ax1.set_ylabel('Reconstruction MSE')
+    ax1.set_title('CVAE: Reconstruction Quality vs Latent Dimension')
+    ax1.grid(True)
+
+    # Test loss curves
+    for dim in dimensions:
+        ax2.plot(results[dim]['test_losses'], label=f'dim={dim}')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Test Loss')
+    ax2.set_title('CVAE: Test Loss During Training')
+    ax2.legend()
+    ax2.grid(True)
+
+    plt.tight_layout()
+    plt.savefig('cvae_dimension_comparison.png', dpi=150, bbox_inches='tight')
+    plt.show()
+
+    return results
 
 def main():
     # Setup
@@ -594,75 +660,77 @@ def main():
 
     # Initialize models
     print("\nInitializing models...")
-    cvae_model = CVAE(y_dim=784, x_dim=28, hidden_dim=400, latent_dim=latent_dim).to(device)
-    regression_model = RegressionBaseline(x_dim=28, hidden_dim=400, y_dim=784).to(device)
+    # cvae_model = CVAE(y_dim=784, x_dim=28, hidden_dim=400, latent_dim=latent_dim).to(device)
+    # regression_model = RegressionBaseline(x_dim=28, hidden_dim=400, y_dim=784).to(device)
 
-    # Train CVAE
-    print("\nTraining CVAE...")
-    cvae_train_losses, cvae_test_losses = train_cvae(
-        cvae_model, train_loader, test_loader, epochs=epochs, lr=lr, device=device
-    )
+    # # Train CVAE
+    # print("\nTraining CVAE...")
+    # cvae_train_losses, cvae_test_losses = train_cvae(
+    #     cvae_model, train_loader, test_loader, epochs=epochs, lr=lr, device=device
+    # )
 
-    # Train Regression baseline
-    print("\nTraining Regression baseline...")
-    reg_train_losses, reg_test_losses = train_regression(
-        regression_model, train_loader, test_loader, epochs=epochs, lr=lr, device=device
-    )
+    # # Train Regression baseline
+    # print("\nTraining Regression baseline...")
+    # reg_train_losses, reg_test_losses = train_regression(
+    #     regression_model, train_loader, test_loader, epochs=epochs, lr=lr, device=device
+    # )
 
-    # Save models
-    torch.save(cvae_model.state_dict(), 'cvae_model.pth')
-    torch.save(regression_model.state_dict(), 'regression_model.pth')
+    # # Save models
+    # torch.save(cvae_model.state_dict(), 'cvae_model.pth')
+    # torch.save(regression_model.state_dict(), 'regression_model.pth')
 
-    # Plot training curves
-    plt.figure(figsize=(12, 5))
+    # # Plot training curves
+    # plt.figure(figsize=(12, 5))
 
-    plt.subplot(1, 2, 1)
-    plt.plot(cvae_train_losses, label='CVAE Train')
-    plt.plot(cvae_test_losses, label='CVAE Test')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('CVAE Training Curves')
-    plt.legend()
-    plt.grid(True)
+    # plt.subplot(1, 2, 1)
+    # plt.plot(cvae_train_losses, label='CVAE Train')
+    # plt.plot(cvae_test_losses, label='CVAE Test')
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Loss')
+    # plt.title('CVAE Training Curves')
+    # plt.legend()
+    # plt.grid(True)
 
-    plt.subplot(1, 2, 2)
-    plt.plot(reg_train_losses, label='Regression Train')
-    plt.plot(reg_test_losses, label='Regression Test')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Regression Training Curves')
-    plt.legend()
-    plt.grid(True)
+    # plt.subplot(1, 2, 2)
+    # plt.plot(reg_train_losses, label='Regression Train')
+    # plt.plot(reg_test_losses, label='Regression Test')
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Loss')
+    # plt.title('Regression Training Curves')
+    # plt.legend()
+    # plt.grid(True)
 
-    plt.tight_layout()
-    plt.savefig('cvae_regression_training_curves.png', dpi=150, bbox_inches='tight')
-    plt.show()
+    # plt.tight_layout()
+    # plt.savefig('cvae_regression_training_curves.png', dpi=150, bbox_inches='tight')
+    # plt.show()
 
-    # Visualizations and Analysis
-    print("\nGenerating visualizations and analysis...")
+    # # Visualizations and Analysis
+    # print("\nGenerating visualizations and analysis...")
 
-    # 1. Compare ambiguous completions
-    visualize_ambiguous_completions(cvae_model, regression_model, test_loader, device)
+    # # 1. Compare ambiguous completions
+    # visualize_ambiguous_completions(cvae_model, regression_model, test_loader, device)
 
-    # 2. Analyze diversity of CVAE outputs
-    diversity_scores = analyze_diversity(cvae_model, test_loader, device)
+    # # 2. Analyze diversity of CVAE outputs
+    # diversity_scores = analyze_diversity(cvae_model, test_loader, device)
 
-    # 3. Find and visualize truly ambiguous cases
-    ambiguous_cases = find_ambiguous_cases(cvae_model, test_loader, device)
+    # # 3. Find and visualize truly ambiguous cases
+    # ambiguous_cases = find_ambiguous_cases(cvae_model, test_loader, device)
 
-    # 4. Quantitative comparison
-    comparison_results = compare_models_quantitatively(
-        cvae_model, regression_model, test_loader, device
-    )
+    # # 4. Quantitative comparison
+    # comparison_results = compare_models_quantitatively(
+    #     cvae_model, regression_model, test_loader, device
+    # )
 
-    print("\n=== Summary ===")
-    print(f"CVAE successfully trained with {latent_dim}-dimensional latent space")
-    print(f"CVAE produces diverse outputs with average diversity score: {np.mean(diversity_scores):.4f}")
-    print(f"Found {len(ambiguous_cases)} ambiguous central columns mapping to multiple digits")
-    print(
-        f"CVAE oracle performance shows potential {comparison_results['regression_mse'] / comparison_results['cvae_best_mse']:.2f}x improvement over regression")
+    # print("\n=== Summary ===")
+    # print(f"CVAE successfully trained with {latent_dim}-dimensional latent space")
+    # print(f"CVAE produces diverse outputs with average diversity score: {np.mean(diversity_scores):.4f}")
+    # print(f"Found {len(ambiguous_cases)} ambiguous central columns mapping to multiple digits")
+    # print(
+    #     f"CVAE oracle performance shows potential {comparison_results['regression_mse'] / comparison_results['cvae_best_mse']:.2f}x improvement over regression")
 
-    print("\nExperiment complete! Check generated plots for visual analysis.")
+    # print("\nExperiment complete! Check generated plots for visual analysis.")
+
+    dimension_results = compare_latent_dimensions_cvae(train_loader, test_loader, device, dimensions=[20])
 
 
 if __name__ == "__main__":

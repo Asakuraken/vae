@@ -194,7 +194,7 @@ def visualize_reconstructions(model, test_loader, device, num_samples=10):
         # Reconstruct
         x_flat = data.view(data.size(0), -1)
         x_logits, _, _, z = model(x_flat)
-        x_recon = torch.sigmoid(x_logits).view(-1, 28, 28)
+        x_recon = torch.sigmoid(x_logits).view(-1, 32, 32)
 
     # Plot
     fig, axes = plt.subplots(2, num_samples, figsize=(15, 4))
@@ -227,7 +227,7 @@ def generate_samples(model, num_samples=100, device='cuda'):
 
         # Decode
         x_logits = model.decode(z)
-        x_samples = torch.sigmoid(x_logits).view(-1, 28, 28)
+        x_samples = torch.sigmoid(x_logits).view(-1, 32, 32)
 
     # Visualize grid of samples
     fig, axes = plt.subplots(int(num_samples/10), 10, figsize=(10, int(num_samples/10)))
@@ -318,7 +318,7 @@ def interpolate_latent(model, test_loader, device, digit1=0, digit2=8, steps=10)
         for alpha in np.linspace(0, 1, steps):
             z_interp = (1 - alpha) * mu1 + alpha * mu2
             x_logits = model.decode(z_interp)
-            x_interp = torch.sigmoid(x_logits).view(28, 28)
+            x_interp = torch.sigmoid(x_logits).view(32, 32)
             interpolations.append(x_interp.cpu())
 
     # Visualize
@@ -353,7 +353,7 @@ def analyze_failure_modes(model, test_loader, device, num_failures=20):
 
             errors.extend(mse.cpu().numpy())
             originals.extend(data.cpu())
-            reconstructions.extend(x_recon.view(-1, 28, 28).cpu())
+            reconstructions.extend(x_recon.view(-1, 32, 32).cpu())
 
     # Find worst reconstructions
     errors = np.array(errors)
@@ -393,7 +393,7 @@ def analyze_ambiguous_generations(model, device, num_samples=50):
         # Generate many samples
         z = torch.randn(num_samples, model.latent_dim).to(device)
         x_logits = model.decode(z)
-        x_samples = torch.sigmoid(x_logits).view(-1, 28, 28)
+        x_samples = torch.sigmoid(x_logits).view(-1, 32, 32)
 
         # Compute "ambiguity" metric (entropy of pixel values)
         # High entropy = more uncertain/blurry
@@ -426,7 +426,7 @@ def compare_latent_dimensions(train_loader, test_loader, device, dimensions=[2, 
         print(f"\nTraining VAE with latent dimension {dim}...")
 
         # Create and train model
-        model = VAE(latent_dim=dim).to(device)
+        model = VAE(input_dim=1024, latent_dim=dim).to(device)
         train_losses, test_losses = train_vae(model, train_loader, test_loader,
                                               epochs=50, device=device)
 
@@ -493,50 +493,51 @@ def main():
     # Hyperparameters
     batch_size = 128
     latent_dim = 20
-    epochs = 100
+    epochs = 200
     lr = 1e-3
 
-    # Load MNIST dataset
+    # Load CIFAR-10 dataset
     transform = transforms.Compose([
+        transforms.Grayscale(),  # Convert RGB to 1 channel
         transforms.ToTensor(),
     ])
 
-    train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST('./data', train=False, transform=transform)
+    train_dataset = datasets.CIFAR10('./data', train=True, download=True, transform=transform)
+    test_dataset = datasets.CIFAR10('./data', train=False, transform=transform)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     # Create and train model
-    # print("Training standard VAE...")
-    # model = VAE(latent_dim=latent_dim).to(device)
-    # train_losses, test_losses = train_vae(model, train_loader, test_loader, epochs=epochs, lr=lr, device=device)
+    print("Training standard VAE...")
+    model = VAE(input_dim=1024, latent_dim=latent_dim).to(device)
+    train_losses, test_losses = train_vae(model, train_loader, test_loader, epochs=epochs, lr=lr, device=device)
 
-    # # Save model
-    # torch.save(model.state_dict(), 'vae_model.pth')
+    # Save model
+    torch.save(model.state_dict(), 'vae_model.pth')
 
     # Visualizations and analysis
-    # print("\nGenerating visualizations...")
+    print("\nGenerating visualizations...")
 
-    # # 1. Reconstruction quality
-    # visualize_reconstructions(model, test_loader, device)
+    # 1. Reconstruction quality
+    visualize_reconstructions(model, test_loader, device)
 
-    # # 2. Generate new samples
-    # generated_samples = generate_samples(model, num_samples=20, device=device)
+    # 2. Generate new samples
+    generated_samples = generate_samples(model, num_samples=20, device=device)
 
-    # # 3. Analyze latent space
-    # latent_codes, labels = analyze_latent_space(model, test_loader, device)
+    # 3. Analyze latent space
+    latent_codes, labels = analyze_latent_space(model, test_loader, device)
 
-    # # 4. Latent space interpolation
-    # interpolate_latent(model, test_loader, device, digit1=3, digit2=8)
-    # interpolate_latent(model, test_loader, device, digit1=4, digit2=9)
+    # 4. Latent space interpolation
+    interpolate_latent(model, test_loader, device, digit1=3, digit2=8)
+    interpolate_latent(model, test_loader, device, digit1=4, digit2=9)
 
-    # # 5. Analyze failure modes
-    # analyze_failure_modes(model, test_loader, device)
+    # 5. Analyze failure modes
+    analyze_failure_modes(model, test_loader, device)
 
     # 6. Compare different latent dimensions
-    print("\nComparing different latent dimensions...")
-    dimension_results = compare_latent_dimensions(train_loader, test_loader, device, dimensions=[20])
+    # print("\nComparing different latent dimensions...")
+    # dimension_results = compare_latent_dimensions(train_loader, test_loader, device, dimensions=[20])
 
     # 7. Plot training curves
     # plt.figure(figsize=(10, 5))

@@ -12,6 +12,19 @@ torch.manual_seed(42)
 np.random.seed(42)
 
 
+class SimpleEncoder(nn.Module):
+    def __init__(self, input_dim=784, latent_dim=20, hidden_dim=400):
+        super().__init__()
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, latent_dim)
+
+    def forward(self, x):
+        h = F.relu(self.fc1(x))
+        h = F.relu(self.fc2(h))
+        z = self.fc3(h)
+        return z
+
 class Decoder(nn.Module):
     """
     Simple decoder network that maps latent codes z to images x.
@@ -40,7 +53,7 @@ class MCMCBayesianModel:
         self.latent_dim = latent_dim
         self.device = device
         self.decoder = Decoder(latent_dim).to(device)
-
+        self.encoder = SimpleEncoder(input_dim=784, latent_dim=self.latent_dim).to(self.device)
         # Prior: Standard Gaussian p(z) = N(0, I)
         self.prior_mean = torch.zeros(latent_dim).to(device)
         self.prior_std = torch.ones(latent_dim).to(device)
@@ -169,10 +182,42 @@ class MCMCBayesianModel:
 
                 # For pre-training, we'll use reconstruction on random pairs
                 # This is a simple initialization strategy
-                target_idx = torch.randperm(data.size(0))
-                target = data[target_idx]
+                # target_idx = torch.randperm(data.size(0))
+                # target = data[target_idx]
+                target = data
 
                 loss = F.binary_cross_entropy_with_logits(x_logits, target)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                total_loss += loss.item()
+
+            if (epoch + 1) % 10 == 0:
+                print(f"Epoch {epoch + 1}/{epochs}, Loss: {total_loss / len(train_loader):.4f}")
+
+
+    def train_autoencoder(self, train_loader, epochs=50, lr=1e-3):
+        """
+        Jointly train encoder and decoder as a vanilla autoencoder
+        """
+        optimizer = torch.optim.Adam(list(self.encoder.parameters()) + list(self.decoder.parameters()), lr=lr)
+
+        print("Training autoencoder...")
+        for epoch in range(epochs):
+            total_loss = 0
+            for batch_idx, (data, _) in enumerate(train_loader):
+                data = data.view(data.size(0), -1).to(self.device)
+
+                # Encode to latent z
+                z = self.encoder(data)
+
+                # Decode to x'
+                x_logits = self.decoder(z)
+
+                # Compute reconstruction loss
+                loss = F.binary_cross_entropy_with_logits(x_logits, data)
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -255,7 +300,6 @@ def analyze_mcmc_convergence(model, x, num_samples=2000, burn_in=0):
 
     # Log posterior trace
     ax1.plot(log_posteriors)
-    ax1.axvline(x=burn_in, color='r', linestyle='--', label='Burn-in')
     ax1.set_xlabel('Iteration')
     ax1.set_ylabel('Log Posterior')
     ax1.set_title('MCMC Convergence')
@@ -275,6 +319,46 @@ def analyze_mcmc_convergence(model, x, num_samples=2000, burn_in=0):
     plt.savefig('mcmc_convergence.png', dpi=150, bbox_inches='tight')
     plt.show()
 
+def compare_latent_dimensions_mcmc(train_loader, test_loader, device, dimensions=[2, 5, 10, 20, 50]):
+    """Compare MCMC model reconstruction quality with different latent dimensions."""
+    results = {}
+
+    for dim in dimensions:
+        print(f"\nEvaluating MCMC with latent dimension {dim}...")
+
+        # Initialize model
+        model = MCMCBayesianModel(latent_dim=dim, device=device)
+
+        # Train autoencoder
+        model.train_autoencoder(train_loader, epochs=30)
+
+        # Get test batch
+        data, _ = next(iter(test_loader))
+        data = data[:64].view(64, -1).to(device)
+
+        # Reconstruct using MCMC
+        mean_recon, _ = model.reconstruct(data, num_mcmc_samples=500, burn_in=200)
+
+        # Compute MSE
+        mse = F.mse_loss(mean_recon, data).item()
+
+        results[dim] = mse
+        print(f"Latent dim {dim}: MSE = {mse:.4f}")
+
+    # Plot results
+    dims = list(results.keys())
+    mses = [results[d] for d in dims]
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(dims, mses, 'bo-')
+    plt.xlabel('Latent Dimension')
+    plt.ylabel('Reconstruction MSE')
+    plt.title('MCMC: Reconstruction Quality vs Latent Dimension')
+    plt.grid(True)
+    plt.savefig('mcmc_dimension_comparison.png', dpi=150, bbox_inches='tight')
+    plt.show()
+
+    return results
 
 def main():
     # Hyperparameters
@@ -298,7 +382,8 @@ def main():
     model = MCMCBayesianModel(latent_dim=latent_dim, device=device)
 
     # Pre-train decoder (optional but helps convergence)
-    model.train_decoder(train_loader, epochs=30)
+    # model.train_decoder(train_loader, epochs=50)
+    model.train_autoencoder(train_loader, epochs=50)
 
     # Visualize results
     visualize_results(model, test_loader, device)
@@ -322,6 +407,9 @@ def main():
     print(f"Reconstruction MSE: {mse:.4f}")
     print(f"Reconstruction BCE: {bce:.4f}")
 
+    # # Compare MCMC reconstruction quality with different latent dimensions
+    # print("\nComparing MCMC reconstruction quality with different latent dimensions...")
+    # compare_latent_dimensions_mcmc(train_loader, test_loader, device, dimensions=[20])
 
 if __name__ == "__main__":
     main()
